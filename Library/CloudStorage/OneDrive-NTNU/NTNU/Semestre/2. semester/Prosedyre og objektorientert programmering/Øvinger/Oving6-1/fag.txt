@@ -1,0 +1,3 @@
+Fag: TDT4102, emnekode: C++
+Fag: TDT4110, emnekode: Informasjonsteknologi grunnkurs
+Fag: TMA4100, emnekode: Matematikk 1
