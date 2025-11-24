@@ -27,8 +27,3 @@ def list_image_paths(images_dir: Optional[Path] = None, recursive: bool = True) 
         for path in root.glob(pattern)
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
     )
-
-
-def list_image_paths_as_str(images_dir: Optional[Path] = None, recursive: bool = True) -> List[str]:
-    """Convenience wrapper returning string paths instead of Path objects."""
-    return [str(path) for path in list_image_paths(images_dir, recursive)]
