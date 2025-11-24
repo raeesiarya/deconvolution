@@ -1,9 +1,9 @@
-from blind_deconvolution import BlindDeconvolver, BlindDeconvConfig
+from blind_deconvolution.blind_deconvolution import BlindDeconvolver, BlindDeconvConfig
 from utils.image_io import load_image
 from utils.image_paths import list_image_paths
 import torch
-from psf_generator import gaussian_psf
-from forward_model import forward_model
+from blind_deconvolution.psf_generator import gaussian_psf
+from blind_deconvolution.forward_model import forward_model
 from utils.convertors import numpy_kernel_to_tensor
 
 def main():

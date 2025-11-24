@@ -27,10 +27,10 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import trange
 
-from forward_model import forward_model
+from blind_deconvolution.forward_model import forward_model
 from utils.convertors import numpy_image_to_tensor, numpy_kernel_to_tensor
-from map_objective import map_objective
-from psf_generator import gaussian_psf, delta_psf
+from blind_deconvolution.map_objective import map_objective
+from blind_deconvolution.psf_generator import gaussian_psf, delta_psf
 
 
 @dataclass
