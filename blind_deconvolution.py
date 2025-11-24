@@ -25,6 +25,7 @@ from typing import Callable, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from tqdm import trange
 
 from forward_model import forward_model
 from utils.convertors import numpy_image_to_tensor, numpy_kernel_to_tensor
@@ -174,7 +175,14 @@ class BlindDeconvolver(nn.Module):
 
         losses: List[float] = []
 
-        for it in range(self.config.num_iters):
+        iterator = trange(
+            self.config.num_iters,
+            disable=not verbose,
+            desc="Blind deconv",
+            leave=False,
+        )
+
+        for it in iterator:
             optimizer.zero_grad()
 
             loss = map_objective(
@@ -197,8 +205,8 @@ class BlindDeconvolver(nn.Module):
             loss_value = float(loss.detach().cpu().item())
             losses.append(loss_value)
 
-            if verbose and (it % 50 == 0 or it == self.config.num_iters - 1):
-                print(f"[Iter {it:04d}] Loss = {loss_value:.6f}")
+            if verbose:
+                iterator.set_postfix({"loss": f"{loss_value:.6f}"})
 
         # Return detached copies
         x_hat = self.x_param.detach().clone()
