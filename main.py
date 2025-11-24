@@ -11,8 +11,14 @@ from utils.cuda_checker import choose_device
 from dataclasses import asdict
 from collections import defaultdict
 import wandb
+import os
+from dotenv import load_dotenv
 
 def main():
+    load_dotenv()
+    os.environ["WANDB_API_KEY"] = os.getenv("WANDB_API_KEY")
+    wandb.login()
+
     device = choose_device()
     image_paths = list_image_paths()
 
