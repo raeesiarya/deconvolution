@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from dataclasses import asdict
 from collections import defaultdict
 import wandb
@@ -12,13 +13,27 @@ from blind_deconvolution.blind_deconvolution import BlindDeconvolver, BlindDecon
 from utils.cuda_checker import choose_device
 from utils.image_paths import list_image_paths
 
-def testebench(num_iters: int, lr_x: float, lr_k: float,
-               lambda_x: float, lambda_k_l2: float,
-               lambda_k_center: float, lambda_pink: float,
-               lambda_diffusion: float, kernel_size: int,
-               sigma_gaussian: float, angle_motion: float,
-               run_name: str | None = None) -> None:
-    """Run blind deconvolution experiments across a dataset of images and multiple PSF types, 
+
+def testebench(
+    num_iters: int,
+    lr_x: float,
+    lr_k: float,
+    lambda_x: float,
+    lambda_k_l2: float,
+    lambda_k_center: float,
+    lambda_pink: float,
+    lambda_diffusion: float,
+    kernel_size: int,
+    sigma_gaussian: float,
+    motion_length: int | None = None,
+    angle_motion: float = 0.0,
+    fried_parameter_turbulence: float | None = None,
+    distortion_strength_turbulence: float = 0.8,
+    seed_turbulence: int | None = None,
+    psf_types: list[str] | None = None,
+    run_name: str | None = None,
+) -> None:
+    """Run blind deconvolution experiments across a dataset of images and multiple PSF types,
     logging intermediate results and evaluation metrics to Weights & Biases.
 
     Args:
@@ -32,7 +47,15 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
         lambda_diffusion (float): Weight for diffusion-based regularization on image or kernel updates.
         kernel_size (int): Size (height/width) of the square PSF kernel to generate and estimate.
         sigma_gaussian (float): Standard deviation to use when generating a Gaussian PSF.
+        motion_length (int | None): Length of the motion blur in pixels. Defaults to kernel_size // 2.
         angle_motion (float): Angle in degrees to use when generating a motion blur PSF.
+        fried_parameter_turbulence (float | None): Effective Fried parameter controlling the
+            turbulence PSF width (smaller => stronger blur). Defaults to kernel_size / 10.
+        distortion_strength_turbulence (float): Scales random distortions that make the turbulence
+            PSF irregular and harder than the motion blur baseline.
+        seed_turbulence (int | None): Optional RNG seed to make turbulence PSFs repeatable.
+        psf_types (list[str] | None): Which PSF scenarios to run. Supported: ["none", "gaussian",
+            "motion", "turbulence"]. If None, runs the blurred trio (gaussian/motion/turbulence).
         run_name (str | None): Optional W&B run name for deterministic labeling.
     """
     config = BlindDeconvConfig(
@@ -48,16 +71,62 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
         device=choose_device(),
     )
 
-    psf_specs = [
-        ("delta", {}),
-        ("gaussian", {"sigma": sigma_gaussian}),
-        ("motion", {"length": config.kernel_size // 2, "angle": angle_motion}),
-        ("disk", {"radius": config.kernel_size / 4}),
-    ]
+    default_types = ["gaussian", "motion", "turbulence"]
+    selected_types = psf_types or default_types
+    unknown = [t for t in selected_types if t not in ["none", "gaussian", "motion", "turbulence"]]
+    if unknown:
+        raise ValueError(
+            f"Unsupported psf_types: {unknown}. Supported: ['none', 'gaussian', 'motion', 'turbulence']"
+        )
+
+    # Only fill defaults for PSFs that are actually requested.
+    motion_length_val = (
+        motion_length
+        if motion_length is not None
+        else (max(1, config.kernel_size // 2) if "motion" in selected_types else None)
+    )
+    sigma_val = (
+        sigma_gaussian
+        if sigma_gaussian is not None
+        else (2.0 if "gaussian" in selected_types else None)
+    )
+    turbulence_fried = (
+        fried_parameter_turbulence
+        if fried_parameter_turbulence is not None
+        else (max(1.0, config.kernel_size / 10) if "turbulence" in selected_types else None)
+    )
+    distortion_strength_val = (
+        distortion_strength_turbulence
+        if distortion_strength_turbulence is not None
+        else (0.8 if "turbulence" in selected_types else None)
+    )
+
+    base_specs: dict[str, dict] = {
+        "none": {"params": {}},
+        "gaussian": {"params": {"sigma": sigma_val}},
+        "motion": {"params": {"length": motion_length_val, "angle": angle_motion}},
+        "turbulence": {
+            "params": {
+                "fried_parameter": turbulence_fried,
+                "distortion_strength": distortion_strength_val,
+                "seed": seed_turbulence,
+            }
+        },
+    }
+
+    psf_specs = [(name, base_specs[name]["params"]) for name in selected_types]
 
     wandb_config = asdict(config)
     wandb_config.pop("image_prior_fn", None)  # not serializable
     wandb_config["psf_types"] = [name for name, _ in psf_specs]
+    wandb_config["psf_params"] = {
+        "gaussian_sigma": sigma_val,
+        "motion_length": motion_length_val,
+        "motion_angle": angle_motion if "motion" in selected_types else None,
+        "turbulence_fried_parameter": turbulence_fried,
+        "turbulence_distortion_strength": distortion_strength_val,
+        "turbulence_seed": seed_turbulence if "turbulence" in selected_types else None,
+    }
 
     run = wandb.init(
         project="deconvolution",
@@ -79,15 +148,24 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
             img_label = img_path.stem
 
             # Load clean image x_true
-            x_true = load_image(img_path, mode="torch", grayscale=True, normalize=True).to(device)
+            x_true = load_image(
+                img_path, mode="torch", grayscale=True, normalize=True
+            ).to(device)
 
             for psf_idx, (psf_name, psf_kwargs) in enumerate(psf_specs):
                 psf_label = f"{img_label}/{psf_name}"
                 combo_idx = img_idx * num_psfs + psf_idx
                 step_offset = combo_idx * (config.num_iters + 1)
 
-                # Generate ground-truth PSF
-                k_np = get_psf(psf_name, size=config.kernel_size, **psf_kwargs)
+                # Generate ground-truth PSF (or identity if psf_name == "none")
+                if psf_name == "none":
+                    k_np = np.zeros(
+                        (config.kernel_size, config.kernel_size), dtype=np.float64
+                    )
+                    k_np[config.kernel_size // 2, config.kernel_size // 2] = 1.0
+                else:
+                    k_np = get_psf(psf_name, size=config.kernel_size, **psf_kwargs)
+
                 k_true = numpy_kernel_to_tensor(k_np).to(device)
 
                 # Create blurred measurement
@@ -99,7 +177,11 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
                 def log_fn(metrics: dict, step: int) -> None:
                     namespaced = {f"{psf_label}/{k}": v for k, v in metrics.items()}
                     wandb.log(
-                        {"image_name": img_path.name, "psf_type": psf_name, **namespaced},
+                        {
+                            "image_name": img_path.name,
+                            "psf_type": psf_name,
+                            **namespaced,
+                        },
                         step=step_offset + step,
                     )
 
@@ -108,9 +190,15 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
                     {
                         "image_name": img_path.name,
                         "psf_type": psf_name,
-                        f"{psf_label}/ground_truth": tensor_to_wandb_image(x_true, f"gt_{img_path.name}"),
-                        f"{psf_label}/measurement": tensor_to_wandb_image(y_meas, f"blurred_{img_path.name}"),
-                        f"{psf_label}/true_kernel": tensor_to_wandb_image(k_true, f"k_true_{img_path.name}"),
+                        f"{psf_label}/ground_truth": tensor_to_wandb_image(
+                            x_true, f"gt_{img_path.name}"
+                        ),
+                        f"{psf_label}/measurement": tensor_to_wandb_image(
+                            y_meas, f"blurred_{img_path.name}"
+                        ),
+                        f"{psf_label}/true_kernel": tensor_to_wandb_image(
+                            k_true, f"k_true_{img_path.name}"
+                        ),
                     },
                     step=step_offset,
                 )
@@ -135,8 +223,12 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
                         f"{psf_label}/ssim": s,
                         f"{psf_label}/kernel_error": k_err,
                         f"{psf_label}/final_loss": losses[-1],
-                        f"{psf_label}/reconstruction": tensor_to_wandb_image(x_hat, f"recon_{img_path.name}"),
-                        f"{psf_label}/estimated_kernel": tensor_to_wandb_image(k_hat, f"k_hat_{img_path.name}"),
+                        f"{psf_label}/reconstruction": tensor_to_wandb_image(
+                            x_hat, f"recon_{img_path.name}"
+                        ),
+                        f"{psf_label}/estimated_kernel": tensor_to_wandb_image(
+                            k_hat, f"k_hat_{img_path.name}"
+                        ),
                         f"{psf_label}/loss_curve": wandb.plot.line_series(
                             xs=list(range(len(losses))),
                             ys=[losses],
@@ -148,14 +240,20 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
                     step=step_offset + config.num_iters,
                 )
 
-                print(f"{psf_name} PSF -> PSNR: {p:.2f} dB, SSIM: {s:.4f}, Kernel Error: {k_err:.4f}")
+                print(
+                    f"{psf_name} PSF -> PSNR: {p:.2f} dB, SSIM: {s:.4f}, Kernel Error: {k_err:.4f}"
+                )
                 print(f"Finished. Final loss: {losses[-1]:.6f}")
-                print(f"x_hat shape: {tuple(x_hat.shape)}, k_hat shape: {tuple(k_hat.shape)}")
+                print(
+                    f"x_hat shape: {tuple(x_hat.shape)}, k_hat shape: {tuple(k_hat.shape)}"
+                )
     finally:
         if wandb.run is not None:
             all_psnr = [score for scores in psnr_scores.values() for score in scores]
             all_ssim = [score for scores in ssim_scores.values() for score in scores]
-            all_kernel_errors = [score for scores in kernel_errors.values() for score in scores]
+            all_kernel_errors = [
+                score for scores in kernel_errors.values() for score in scores
+            ]
             if all_psnr:
                 wandb.run.summary["mean_psnr"] = sum(all_psnr) / len(all_psnr)
                 wandb.run.summary["mean_ssim"] = sum(all_ssim) / len(all_ssim)
@@ -169,7 +267,9 @@ def testebench(num_iters: int, lr_x: float, lr_k: float,
                     for name, scores in ssim_scores.items()
                     if scores
                 }
-                wandb.run.summary["mean_kernel_error"] = sum(all_kernel_errors) / len(all_kernel_errors)
+                wandb.run.summary["mean_kernel_error"] = sum(all_kernel_errors) / len(
+                    all_kernel_errors
+                )
                 wandb.run.summary["mean_kernel_error_by_psf"] = {
                     name: sum(scores) / len(scores)
                     for name, scores in kernel_errors.items()

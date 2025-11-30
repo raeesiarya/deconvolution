@@ -30,7 +30,7 @@ from tqdm import trange
 from blind_deconvolution.forward_model import forward_model
 from utils.convertors import numpy_image_to_tensor, numpy_kernel_to_tensor
 from blind_deconvolution.map_objective import map_objective
-from blind_deconvolution.psf_generator import gaussian_psf, delta_psf
+from blind_deconvolution.psf_generator import gaussian_psf, motion_psf
 from utils.cuda_checker import choose_device
 
 
@@ -86,8 +86,8 @@ class BlindDeconvolver(nn.Module):
 
         Strategy:
           - Initialize x as the observed blurred image (clipped to [0,1]).
-          - Initialize k as a delta kernel (no blur), then allow optimizer to
-            deviate from that.
+          - Initialize k as a minimal motion kernel (length=1) to approximate
+            an identity blur, then allow optimizer to deviate from that.
 
         Args:
             y_meas: Tensor of shape (B, 1, H, W). Currently B must be 1.
@@ -107,8 +107,8 @@ class BlindDeconvolver(nn.Module):
         x_init = y_meas.clone().detach()
         x_init = x_init.clamp(0.0, 1.0)
 
-        # Initialize kernel as delta
-        k_np = delta_psf(size=self.config.kernel_size)
+        # Initialize kernel as a length-1 motion blur (acts like an impulse)
+        k_np = motion_psf(size=self.config.kernel_size, length=1, angle=0.0)
         k_init = numpy_kernel_to_tensor(k_np)  # (1,1,Kh,Kw)
         k_init = k_init.to(device)
 

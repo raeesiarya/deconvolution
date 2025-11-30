@@ -95,11 +95,13 @@ def forward_model(
 
 
 if __name__ == "__main__":
-    # Tiny sanity check (using a random image + delta kernel)
+    # Tiny sanity check (using a random image + Gaussian kernel)
+    from blind_deconvolution.psf_generator import gaussian_psf
+
     H, W = 64, 64
     x = torch.rand(1, 1, H, W)
-    k = torch.zeros(1, 1, 15, 15)
-    k[0, 0, 7, 7] = 1.0  # delta PSF in the center
+    k_np = gaussian_psf(size=15, sigma=2.0)
+    k = torch.from_numpy(k_np).unsqueeze(0).unsqueeze(0)
 
     y = forward_model(x, k, noise_sigma=0.01)
     print("x shape:", x.shape)

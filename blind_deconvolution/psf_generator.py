@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Tuple
+from scipy.ndimage import rotate, gaussian_filter
 
 
 ##############################
@@ -30,22 +30,6 @@ def _normalize_psf(psf: np.ndarray) -> np.ndarray:
 ##############################
 
 
-def delta_psf(size: int = 15) -> np.ndarray:
-    """Delta kernel (identity PSF).
-
-    Args:
-        size: Size of the (size x size) PSF.
-
-    Returns:
-        2D numpy array with a single 1 at the center.
-    """
-    if size <= 0:
-        raise ValueError("size must be positive")
-    psf = np.zeros((size, size), dtype=np.float64)
-    psf[size // 2, size // 2] = 1.0
-    return psf
-
-
 def gaussian_psf(size: int = 15, sigma: float = 2.0) -> np.ndarray:
     """Gaussian blur PSF.
 
@@ -67,7 +51,9 @@ def gaussian_psf(size: int = 15, sigma: float = 2.0) -> np.ndarray:
     return _normalize_psf(kernel)
 
 
-def motion_psf(size: int = 15, length: int | None = None, angle: float = 0.0) -> np.ndarray:
+def motion_psf(
+    size: int = 15, length: int | None = None, angle: float = 0.0
+) -> np.ndarray:
     """Simple linear motion blur PSF.
 
     Args:
@@ -96,38 +82,66 @@ def motion_psf(size: int = 15, length: int | None = None, angle: float = 0.0) ->
     # To avoid importing skimage.transform here, we can manually rotate using
     # interpolation via scipy.ndimage if available. For now, implement a
     # simple nearest-neighbor rotation using scipy.ndimage.rotate if present.
-
-    try:
-        from scipy.ndimage import rotate
-
-        rotated = rotate(psf, angle=angle, reshape=False, order=1, mode="constant", cval=0.0)
-    except Exception:
-        # Fallback: no rotation library available, just return horizontal
-        rotated = psf
+    rotated = rotate(
+        psf, angle=angle, reshape=False, order=1, mode="constant", cval=0.0
+    )
 
     return _normalize_psf(rotated)
 
 
-def disk_psf(size: int = 15, radius: float | None = None) -> np.ndarray:
-    """Disk-shaped (out-of-focus) blur PSF.
+def turbulence_psf(
+    size: int = 15,
+    fried_parameter: float | None = None,
+    distortion_strength: float = 0.6,
+    seed: int | None = None,
+) -> np.ndarray:
+    """Atmospheric turbulence-inspired PSF.
+
+    We approximate a Kolmogorov long-exposure PSF with a heavy-tailed radial
+    profile and low-frequency distortions, which generally produces a blur
+    harder to invert than a single straight-line motion kernel.
 
     Args:
         size: Size of the PSF (size x size).
-        radius: Radius of the disk in pixels. If None, defaults to size / 4.
-
-    Returns:
-        Normalized 2D disk kernel.
+        fried_parameter: Controls blur width; smaller => stronger blur. Defaults
+            to size / 8.
+        distortion_strength: Scales random low-frequency distortions that break
+            radial symmetry.
+        seed: Optional RNG seed for repeatability.
     """
     if size <= 0:
         raise ValueError("size must be positive")
+    if distortion_strength < 0:
+        raise ValueError("distortion_strength must be non-negative")
 
-    if radius is None:
-        radius = size / 4.0
+    if fried_parameter is None:
+        fried_parameter = max(1.0, size / 8)
+    if fried_parameter <= 0:
+        raise ValueError("fried_parameter must be positive")
 
+    rng = np.random.default_rng(seed)
+
+    # Radial Kolmogorov-like envelope (heavier tails than Gaussian).
     ax = np.linspace(-(size // 2), size // 2, size)
     xx, yy = np.meshgrid(ax, ax)
-    mask = (xx**2 + yy**2) <= radius**2
-    psf = mask.astype(np.float64)
+    rho = np.sqrt(xx**2 + yy**2) + 1e-8
+
+    # Add a small random anisotropy to emulate wind-driven shear.
+    shear_x = 1.0 + 0.3 * rng.standard_normal()
+    shear_y = 1.0 + 0.3 * rng.standard_normal()
+    rho_aniso = np.sqrt((xx / shear_x) ** 2 + (yy / shear_y) ** 2) + 1e-8
+
+    base = np.exp(-0.5 * (rho_aniso / fried_parameter) ** (5.0 / 3.0))
+
+    # Low-frequency distortion field; smoothed noise perturbs the envelope.
+    noise = rng.standard_normal((size, size))
+
+    distortion = gaussian_filter(noise, sigma=max(1.0, size / 10), mode="reflect")
+    distortion = distortion - distortion.mean()
+    distortion = distortion / (distortion.std() + 1e-8)
+
+    psf = base * np.exp(distortion_strength * distortion)
+
     return _normalize_psf(psf)
 
 
@@ -140,7 +154,7 @@ def get_psf(psf_type: str, size: int = 15, **kwargs) -> np.ndarray:
     """Convenience factory to get a PSF by name.
 
     Args:
-        psf_type: One of ["delta", "gaussian", "motion", "disk"].
+        psf_type: One of ["gaussian", "motion", "turbulence"].
         size: Kernel size.
         **kwargs: Extra parameters forwarded to the underlying generator.
 
@@ -149,22 +163,25 @@ def get_psf(psf_type: str, size: int = 15, **kwargs) -> np.ndarray:
     """
     psf_type = psf_type.lower()
 
-    if psf_type == "delta":
-        return delta_psf(size=size)
     if psf_type == "gaussian":
         return gaussian_psf(size=size, sigma=kwargs.get("sigma", 2.0))
     if psf_type == "motion":
-        return motion_psf(size=size,
-                          length=kwargs.get("length"),
-                          angle=kwargs.get("angle", 0.0))
-    if psf_type == "disk":
-        return disk_psf(size=size, radius=kwargs.get("radius"))
+        return motion_psf(
+            size=size, length=kwargs.get("length"), angle=kwargs.get("angle", 0.0)
+        )
+    if psf_type == "turbulence":
+        return turbulence_psf(
+            size=size,
+            fried_parameter=kwargs.get("fried_parameter"),
+            distortion_strength=kwargs.get("distortion_strength", 0.6),
+            seed=kwargs.get("seed"),
+        )
 
     raise ValueError(f"Unknown psf_type: {psf_type}")
 
 
 if __name__ == "__main__":
     # Quick sanity check when running this file directly
-    for name in ["delta", "gaussian", "motion", "disk"]:
+    for name in ["gaussian", "motion", "turbulence"]:
         k = get_psf(name, size=15)
         print(name, k.shape, k.sum(), k.min(), k.max())

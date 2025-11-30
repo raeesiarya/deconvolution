@@ -6,7 +6,7 @@ Research playground for single-image blind deconvolution. The testbench builds s
 - `main.py`: orchestrates the sweep of testbench configs and calls the core experiment runner.
 - `testing/testbench.py`: runs each config across all images and PSF types, logs W&B artifacts/metrics (PSNR, SSIM, kernel error, loss curves).
 - `testing/testbench_configs.py`: list of named experiment configs (iter counts, LRs, priors, kernel sizes, PSF settings).
-- `blind_deconvolution/`: core solver (`BlindDeconvolver`), forward model, PSF generators (gaussian/motion/disk/delta), and priors (pink-noise + diffusion stub hook).
+- `blind_deconvolution/`: core solver (`BlindDeconvolver`), forward model, PSF generators (gaussian/motion/turbulence), and priors (pink-noise + diffusion stub hook).
 - `utils/`: image I/O, path helpers, NumPy↔Torch converters, metrics, device chooser, and W&B helpers.
 - `images/`: sample `synthetic/` patterns and a `real/` folder for your data. Supported: png/jpg/jpeg/tif/tiff/bmp.
 
@@ -30,7 +30,7 @@ Research playground for single-image blind deconvolution. The testbench builds s
    ```bash
    python main.py
    ```
-   Each run iterates over every config in `testing/testbench_configs.py` and every PSF type defined in `testing/testbench.py` (delta, gaussian, motion, disk). Measurements add light Gaussian noise.
+   Each run iterates over every config in `testing/testbench_configs.py` and every PSF type defined in `testing/testbench.py` (gaussian, motion, turbulence). Measurements add light Gaussian noise.
 
 What gets logged to W&B:
 - Per image/PSF: reconstructions, estimated vs. true kernels, loss curves, PSNR, SSIM, kernel error, and the blurred measurement.
