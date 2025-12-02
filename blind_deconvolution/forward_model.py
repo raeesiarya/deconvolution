@@ -1,14 +1,3 @@
-"""
-forward_model.py
-
-Differentiable forward imaging model for blind deconvolution:
-
-    y = k * x + noise
-
-Implemented in PyTorch so that we can optimize x (or a latent z)
-and the kernel parameters via gradient-based methods.
-"""
-
 from __future__ import annotations
 
 from typing import Optional

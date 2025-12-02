@@ -1,7 +1,3 @@
-"""
-Generate synthetic images using the helper functions in synthetic_image_gen
-and save them into the images directory.
-"""
 import os
 from typing import List
 import numpy as np
@@ -9,6 +5,7 @@ from skimage import img_as_ubyte, io
 
 DEFAULT_SIZE = 256
 DEFAULT_OUTPUT_DIR = "images/synthetic"
+
 
 def gen_checkerboard(size: int = 256, num_checks: int = 8) -> np.ndarray:
     """
@@ -24,8 +21,7 @@ def gen_checkerboard(size: int = 256, num_checks: int = 8) -> np.ndarray:
     x = np.arange(size)
     y = np.arange(size)
     xx, yy = np.meshgrid(x, y)
-    checks = ((xx // (size // num_checks)) +
-              (yy // (size // num_checks))) % 2
+    checks = ((xx // (size // num_checks)) + (yy // (size // num_checks))) % 2
     return checks.astype(float)
 
 
@@ -58,7 +54,7 @@ def gen_circle(size: int = 256, radius_ratio: float = 0.3) -> np.ndarray:
         np.ndarray: Image with a white circle on black background.
     """
     radius = size * radius_ratio
-    x = np.linspace(-size/2, size/2, size)
+    x = np.linspace(-size / 2, size / 2, size)
     xx, yy = np.meshgrid(x, x)
     mask = (xx**2 + yy**2) <= radius**2
     return mask.astype(float)
@@ -77,7 +73,7 @@ def gen_bars(size: int = 256, bar_width: int = 16) -> np.ndarray:
     """
     img = np.zeros((size, size))
     for i in range(0, size, 2 * bar_width):
-        img[:, i:i + bar_width] = 1.0
+        img[:, i : i + bar_width] = 1.0
     return img
 
 
@@ -109,7 +105,9 @@ def gen_pink_noise(size: int = 256, beta: float = 1.0) -> np.ndarray:
     return noise
 
 
-def generate_images(output_dir: str = DEFAULT_OUTPUT_DIR, size: int = DEFAULT_SIZE) -> List[str]:
+def generate_images(
+    output_dir: str = DEFAULT_OUTPUT_DIR, size: int = DEFAULT_SIZE
+) -> List[str]:
     os.makedirs(output_dir, exist_ok=True)
 
     images = {

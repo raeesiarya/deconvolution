@@ -223,10 +223,3 @@ def get_psf(psf_type: str, size: int = 15, **kwargs) -> np.ndarray:
         )
 
     raise ValueError(f"Unknown psf_type: {psf_type}")
-
-
-if __name__ == "__main__":
-    # Quick sanity check when running this file directly
-    for name in ["gaussian", "motion", "turbulence", "rml"]:
-        k = get_psf(name, size=15)
-        print(name, k.shape, k.sum(), k.min(), k.max())

@@ -1,37 +1,3 @@
-
-
-"""map_objective.py
-
-MAP (Maximum A Posteriori) objective for blind deconvolution.
-
-We model the forward process as
-
-    y = k * x + noise
-
-where
-    x : sharp image (B, 1, H, W)
-    k : PSF kernel (1, 1, Kh, Kw)
-    y : observed blurred image (B, 1, H, W)
-
-The MAP estimator solves
-
-    (x*, k*) = argmin_{x,k}  ||y - k * x||^2
-                              + lambda_x * Phi(x)
-                              + lambda_k * Psi(k)
-
-This file defines:
-
-- data_fidelity_loss(x, k, y_meas)
-- kernel_prior_loss(k, ...)
-- kernel_autocorrelation_loss(k)
-- image_prior_loss(x, prior_fn=None)
-- map_objective(x, k, y_meas, ...)
-
-The image prior is implemented as a *hook* via `prior_fn(x)`, so that you can
-later plug in a diffusion-model-based score prior or any other learned prior.
-For now, the default prior is zero (i.e., no image prior).
-"""
-
 from __future__ import annotations
 
 from typing import Callable, Dict, Optional, Tuple
@@ -103,7 +69,7 @@ def kernel_prior_loss(
     components = {}
 
     if l2_weight > 0.0:
-        l2_term = l2_weight * torch.mean(k ** 2)
+        l2_term = l2_weight * torch.mean(k**2)
         loss = loss + l2_term
         components["loss_kernel_l2"] = l2_term
 
@@ -164,7 +130,7 @@ def kernel_autocorrelation_loss(k: torch.Tensor) -> torch.Tensor:
     # Penalize off-center energy; mean over spatial dims and batch.
     off_center = autocorr.clone()
     off_center[..., cy, cx] = 0.0
-    off_energy = (off_center ** 2).mean(dim=(-2, -1))
+    off_energy = (off_center**2).mean(dim=(-2, -1))
     return off_energy.mean()
 
 
@@ -265,7 +231,7 @@ def map_objective(
     loss_pink = x.new_tensor(0.0)
     if lambda_pink > 0.0:
         loss_pink = lambda_pink * pink_noise_loss(x)
-    
+
     loss_diffusion = x.new_tensor(0.0)
     if lambda_diffusion > 0.0:
         loss_diffusion = lambda_diffusion * diffusion_prior_loss(x)
