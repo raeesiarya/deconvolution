@@ -1,22 +1,3 @@
-
-"""
-blind_deconvolution.py
-
-Baseline blind deconvolution solver using the MAP objective defined in
-`map_objective.py` and the differentiable forward model in `forward_model.py`.
-
-We solve
-
-    (x*, k*) = argmin_{x,k}  ||y_meas - k * x||^2
-                              + lambda_x * Phi(x)
-                              + lambda_k * Psi(k)
-
-by directly optimizing over the image x and the PSF kernel k using gradient-based
-optimization (Adam). This is a simple but flexible baseline that you can later
-extend with a diffusion prior (plugged into Phi(x)) or more sophisticated
-kernel models.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -42,11 +23,12 @@ class BlindDeconvConfig:
     lr_k: float = 1e-2
 
     # MAP prior weights
-    lambda_x: float = 0.0          # image prior (Phi(x))
-    lambda_k_l2: float = 1e-3      # L2 prior on kernel
+    lambda_x: float = 0.0  # image prior (Phi(x))
+    lambda_k_l2: float = 1e-3  # L2 prior on kernel
     lambda_k_center: float = 1e-3  # center-of-mass prior on kernel
-    lambda_pink: float = 0.0      # pink-noise prior weight
-    lambda_diffusion: float = 0.0 # diffusion prior weight
+    lambda_k_auto: float = 0.0  # autocorrelation prior (k * k -> delta)
+    lambda_pink: float = 0.0  # pink-noise prior weight
+    lambda_diffusion: float = 0.0  # diffusion prior weight
 
     # Kernel settings
     kernel_size: int = 15
@@ -55,7 +37,7 @@ class BlindDeconvConfig:
     image_prior_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
 
     # Device
-    device: str = "cpu"
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class BlindDeconvolver(nn.Module):
@@ -93,7 +75,9 @@ class BlindDeconvolver(nn.Module):
             y_meas: Tensor of shape (B, 1, H, W). Currently B must be 1.
         """
         if y_meas.dim() != 4 or y_meas.shape[1] != 1:
-            raise ValueError(f"Expected y_meas of shape (B,1,H,W), got {tuple(y_meas.shape)}")
+            raise ValueError(
+                f"Expected y_meas of shape (B,1,H,W), got {tuple(y_meas.shape)}"
+            )
 
         if y_meas.shape[0] != 1:
             raise NotImplementedError("Current implementation supports B=1 only.")
@@ -131,7 +115,7 @@ class BlindDeconvolver(nn.Module):
         with torch.no_grad():
             k = self.k_param.data
             k.clamp_(min=0.0)
-            k /= (k.sum() + 1e-8)
+            k /= k.sum() + 1e-8
             self.k_param.data = k
 
     def project_image(self) -> None:
@@ -192,17 +176,26 @@ class BlindDeconvolver(nn.Module):
         for it in iterator:
             optimizer.zero_grad()
 
-            loss = map_objective(
+            need_components = log_fn is not None
+            result = map_objective(
                 self.x_param,
                 self.k_param,
                 y_meas,
                 lambda_x=self.config.lambda_x,
                 lambda_k_l2=self.config.lambda_k_l2,
                 lambda_k_center=self.config.lambda_k_center,
+                lambda_k_auto=self.config.lambda_k_auto,
                 lambda_pink=self.config.lambda_pink,
                 lambda_diffusion=self.config.lambda_diffusion,
                 image_prior_fn=self.config.image_prior_fn,
+                return_components=need_components,
             )
+
+            if need_components:
+                loss, loss_components = result
+            else:
+                loss = result
+                loss_components = None
 
             loss.backward()
             optimizer.step()
@@ -216,7 +209,15 @@ class BlindDeconvolver(nn.Module):
 
             if log_fn is not None and log_every > 0:
                 if (it % log_every == 0) or (it == self.config.num_iters - 1):
-                    log_fn({"loss": loss_value}, it)
+                    metrics = {"loss": loss_value}
+                    if loss_components is not None:
+                        metrics.update(
+                            {
+                                name: float(val.detach().cpu().item())
+                                for name, val in loss_components.items()
+                            }
+                        )
+                    log_fn(metrics, it)
 
             if verbose:
                 iterator.set_postfix({"loss": f"{loss_value:.6f}"})
@@ -225,71 +226,3 @@ class BlindDeconvolver(nn.Module):
         x_hat = self.x_param.detach().clone()
         k_hat = self.k_param.detach().clone()
         return x_hat, k_hat, losses
-
-
-# ---------------------------------------------------------------------------
-# Convenience demo when running this file directly
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    """
-    Quick demo:
-      1. Generate a synthetic sharp image and PSF (Gaussian).
-      2. Blur the image with the forward model to get y_meas.
-      3. Run blind deconvolution to recover x_hat and k_hat.
-    """
-
-    import numpy as np
-    from skimage import io, color, img_as_float
-
-    # Choose device
-    device = choose_device()
-
-    # Load a test image (use any of your synthetic images)
-    img_path = "images/synthetic/checkerboard.png"  # adjust as needed
-    try:
-        img_np = io.imread(img_path)
-    except FileNotFoundError:
-        print(f"Could not find {img_path}. Please adjust the path in __main__.")
-        exit(0)
-
-    if img_np.ndim == 3:
-        img_np = color.rgb2gray(img_np)
-    img_np = img_as_float(img_np).astype(np.float32)
-
-    # Convert to torch tensor
-    x_true = numpy_image_to_tensor(img_np).to(device)
-
-    # Generate ground-truth PSF (Gaussian)
-    k_true_np = gaussian_psf(size=15, sigma=2.0)
-    k_true = numpy_kernel_to_tensor(k_true_np).to(device)
-
-    # Create measurement
-    with torch.no_grad():
-        y_meas = forward_model(x_true, k_true, noise_sigma=0.01)
-
-    print("x_true shape:", x_true.shape)
-    print("k_true shape:", k_true.shape)
-    print("y_meas shape:", y_meas.shape)
-
-    # Configure solver
-    config = BlindDeconvConfig(
-        num_iters=300,
-        lr_x=1e-2,
-        lr_k=1e-2,
-        lambda_x=0.0,          # no image prior yet
-        lambda_k_l2=1e-3,
-        lambda_k_center=1e-3,
-        kernel_size=15,
-        image_prior_fn=None,   # hook for diffusion / TV later
-        device=device,
-    )
-
-    solver = BlindDeconvolver(config).to(device)
-    x_hat, k_hat, losses = solver.run(y_meas, verbose=True)
-
-    print("Optimization finished.")
-    print("Final loss:", losses[-1])
-
-    # Optionally save or visualize results
-    # (left as an exercise: you can use matplotlib to compare x_true, y_meas, x_hat, and kernels)
