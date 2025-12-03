@@ -37,7 +37,7 @@ class BlindDeconvConfig:
     image_prior_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
 
     # Device
-    device: str = "cpu"
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class BlindDeconvolver(nn.Module):

@@ -6,11 +6,6 @@ import torch
 import torch.nn.functional as F
 
 
-##############################
-# Core forward model
-##############################
-
-
 def forward_convolve(
     x: torch.Tensor,
     k: torch.Tensor,
@@ -81,18 +76,3 @@ def forward_model(
     y = forward_convolve(x, k)
     y = add_gaussian_noise(y, noise_sigma)
     return y
-
-
-if __name__ == "__main__":
-    # Tiny sanity check (using a random image + Gaussian kernel)
-    from blind_deconvolution.psf_generator import gaussian_psf
-
-    H, W = 64, 64
-    x = torch.rand(1, 1, H, W)
-    k_np = gaussian_psf(size=15, sigma=2.0)
-    k = torch.from_numpy(k_np).unsqueeze(0).unsqueeze(0)
-
-    y = forward_model(x, k, noise_sigma=0.01)
-    print("x shape:", x.shape)
-    print("k shape:", k.shape)
-    print("y shape:", y.shape)

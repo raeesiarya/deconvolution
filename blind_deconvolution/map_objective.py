@@ -9,11 +9,6 @@ from blind_deconvolution.priors.pink_noise import pink_noise_loss
 from blind_deconvolution.priors.diffusion import diffusion_prior_loss
 
 
-##############################
-# Data fidelity (likelihood)
-##############################
-
-
 def data_fidelity_loss(
     x: torch.Tensor,
     k: torch.Tensor,
@@ -32,11 +27,6 @@ def data_fidelity_loss(
     y_pred = forward_model(x, k, noise_sigma=0.0)
     loss = torch.mean((y_pred - y_meas) ** 2)
     return loss
-
-
-##############################
-# Kernel prior (regularizer)
-##############################
 
 
 def kernel_prior_loss(
@@ -134,11 +124,6 @@ def kernel_autocorrelation_loss(k: torch.Tensor) -> torch.Tensor:
     return off_energy.mean()
 
 
-##############################
-# Image prior (hook for diffusion, etc.)
-##############################
-
-
 def image_prior_loss(
     x: torch.Tensor,
     prior_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
@@ -164,11 +149,6 @@ def image_prior_loss(
         # Ensure it's a scalar
         raw_prior = raw_prior.mean()
     return weight * raw_prior
-
-
-##############################
-# Full MAP objective
-##############################
 
 
 def map_objective(
@@ -249,25 +229,3 @@ def map_objective(
         return total, components
 
     return total
-
-
-if __name__ == "__main__":
-    # Tiny sanity check: random tensors
-    B, H, W = 1, 64, 64
-    Kh = Kw = 15
-
-    x = torch.rand(B, 1, H, W)
-    k = torch.rand(1, 1, Kh, Kw)
-    k = k / (k.sum() + 1e-8)
-    y_meas = torch.rand(B, 1, H, W)
-
-    loss = map_objective(
-        x,
-        k,
-        y_meas,
-        lambda_x=0.0,
-        lambda_k_l2=1e-3,
-        lambda_k_center=1e-3,
-        image_prior_fn=None,
-    )
-    print("MAP loss:", float(loss.detach().cpu().item()))

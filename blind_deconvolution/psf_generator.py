@@ -25,11 +25,6 @@ def _normalize_psf(psf: np.ndarray) -> np.ndarray:
     return psf / s
 
 
-##############################
-# Basic PSF Generators
-##############################
-
-
 def gaussian_psf(size: int = 15, sigma: float = 2.0) -> np.ndarray:
     """Gaussian blur PSF.
 
