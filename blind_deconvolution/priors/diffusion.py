@@ -18,7 +18,7 @@ def _get_ddpm_pipeline(device: torch.device) -> DDPMPipeline:
 
     if _DDPM_PIPELINE is None:
         # You can swap this for another DDPM, e.g. "google/ddpm-cat-256"
-        model_id = "SherryXTChen/LatentDiffusionDINOv2"
+        model_id = "google/ddpm-celebahq-256"
         pipe = DDPMPipeline.from_pretrained(model_id)
         pipe = pipe.to(device)
         pipe.unet.eval()
